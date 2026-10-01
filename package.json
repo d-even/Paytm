@@ -1,0 +1,42 @@
+{
+  "name": "vyapaar-mitra-agent",
+  "version": "1.0.0",
+  "description": "Autonomous AI business copilot for Paytm merchants \u2014 Observe \u2192 Reason \u2192 Decide \u2192 Act \u2192 Learn, shipped as an API.",
+  "main": "src/server.js",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "seed": "node scripts/seed.js",
+    "simulate": "node scripts/simulate.js",
+    "pos:tap": "node scripts/virtualPos.js",
+    "gen:device-secret": "node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+    "test": "node --test \"test/*.test.js\"",
+    "app:install": "npm --prefix frontend install",
+    "app:dev": "npm --prefix frontend run dev",
+    "app:build": "npm --prefix frontend run build",
+    "setup": "npm install && npm --prefix frontend install && npm --prefix frontend run build"
+  },
+  "keywords": [
+    "paytm",
+    "merchant",
+    "ai-agent",
+    "claude",
+    "hackathon"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "dotenv": "^18.0.4",
+    "express": "^5.2.1",
+    "mongoose": "^9.10.3",
+    "node-cron": "^4.6.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "^11.3.0"
+  }
+}

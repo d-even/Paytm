@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vyapaar Mitra · Counter</title>
+<style>
+  :root {
+    --bg: #0b1e3d; --panel: #13294d; --panel-2: #1a3561; --line: #24416f;
+    --text: #eef3fa; --muted: #9fb3c8; --pink: #f0355c; --blue: #2e9dd6; --green: #22c55e; --amber: #f59e0b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 22px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: .3px; }
+  header .merchant { color: var(--muted); }
+  header .spacer { flex: 1; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--amber); display: inline-block; margin-right: 6px; }
+  .dot.on { background: var(--green); }
+  main { display: grid; grid-template-columns: minmax(340px, 1fr) minmax(360px, 1.1fr); gap: 18px; padding: 18px 22px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .panel + .panel { margin-top: 18px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.6px; color: var(--pink); margin: 0 0 12px; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer; background: var(--panel-2); color: var(--text); }
+  button:hover { filter: brightness(1.15); }
+  button.primary { background: var(--pink); font-weight: 600; }
+  button.ok { background: var(--green); color: #05230f; font-weight: 600; }
+  button.ghost { background: transparent; border: 1px solid var(--line); }
+  button:disabled { opacity: .5; cursor: default; }
+  input { font: inherit; background: #0d2244; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; width: 100%; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .amount-input { font-size: 34px; font-weight: 700; padding: 12px 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 14px; }
+  .chips button { padding: 6px 12px; font-size: 14px; }
+  .bill { display: none; text-align: center; }
+  .bill .amt { font-size: 44px; font-weight: 800; margin: 4px 0; }
+  .qr { background: #fff; border-radius: 12px; padding: 10px; width: 230px; height: 230px; margin: 12px auto; }
+  .qr svg { width: 100%; height: 100%; }
+  .ways { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 8px 0 12px; }
+  .way { background: var(--panel-2); border-radius: 10px; padding: 10px; font-size: 14px; }
+  .way b { display: block; font-size: 15px; }
+  .pulse { animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: .45; } }
+  .paid { display: none; text-align: center; padding: 18px 0; }
+  .paid .tick { width: 76px; height: 76px; border-radius: 50%; background: var(--green); color: #05230f; font-size: 44px; line-height: 76px; margin: 0 auto 10px; font-weight: 800; }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; background: var(--blue); }
+  .tag.REGULAR { background: var(--pink); }
+  .muted { color: var(--muted); font-size: 13px; }
+  .card-alert { display: none; margin-top: 14px; background: #2a2150; border: 1px solid #5b4aa0; border-radius: 12px; padding: 12px; }
+  .feed { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow: auto; }
+  .feed li { padding: 9px 10px; border-radius: 10px; background: var(--panel-2); margin-bottom: 8px; font-size: 14px; }
+  .feed li .k { font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); display: block; margin-bottom: 2px; }
+  .feed li.soundbox { border-left: 3px solid var(--blue); }
+  .feed li.whatsapp { border-left: 3px solid var(--green); }
+  .feed li.dashboard { border-left: 3px solid var(--amber); }
+  .feed li.ai { border-left: 3px solid var(--pink); }
+  .speaker { font-size: 20px; line-height: 1.35; padding: 14px; border-radius: 12px; background: #0d2244; min-height: 64px; margin-bottom: 10px; }
+  .approval { background: var(--panel-2); border-radius: 10px; padding: 10px; margin-bottom: 8px; font-size: 14px; }
+  .approval .why { color: var(--amber); font-size: 12px; margin: 4px 0 8px; }
+  .modal { position: fixed; inset: 0; background: rgba(4,12,26,.8); display: none; align-items: center; justify-content: center; }
+  .modal .panel { width: min(420px, 92vw); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vyapaar Mitra · Counter</h1>
+  <span class="merchant" id="merchantLabel"></span>
+  <span class="spacer"></span>
+  <span class="muted"><span class="dot" id="liveDot"></span><span id="liveText">connecting…</span></span>
+  <button class="ghost" id="settingsBtn" title="Settings">⚙</button>
+</header>
+
+<main>
+  <!-- LEFT: billing -->
+  <section>
+    <div class="panel">
+      <h2>New bill</h2>
+      <div id="newBill">
+        <input id="amount" class="amount-input" type="number" min="1" inputmode="numeric" placeholder="₹ amount">
+        <div class="chips">
+          <button data-amt="50">₹50</button><button data-amt="120">₹120</button>
+          <button data-amt="240">₹240</button><button data-amt="310">₹310</button><button data-amt="500">₹500</button>
+        </div>
+        <button class="primary" id="createBtn" style="width:100%">Create bill → card or QR</button>
+      </div>
+
+      <div class="bill" id="bill">
+        <div class="muted">Amount to pay</div>
+        <div class="amt" id="billAmt"></div>
+        <div class="qr" id="qr"></div>
+        <div class="ways">
+          <div class="way"><b>📱 Scan QR</b>pay by UPI on phone</div>
+          <div class="way pulse"><b>💳 Tap card</b>on the RFID reader</div>
+        </div>
+        <div class="muted" id="countdown"></div>
+        <div style="margin-top:10px"><button class="ghost" id="cancelBtn">Cancel bill</button></div>
+      </div>
+
+      <div class="paid" id="paid">
+        <div class="tick">✓</div>
+        <div style="font-size:28px;font-weight:800" id="paidAmt"></div>
+        <div class="muted" id="paidVia"></div>
+        <div style="margin:10px 0" id="paidTag"></div>
+        <button class="primary" id="nextBtn">Next customer</button>
+      </div>
+
+      <div class="card-alert" id="cardAlert">
+        <div><b>💳 Card scanned:</b> <code id="cardUid"></code> <span class="muted" id="cardInfo"></span></div>
+        <div class="muted" style="margin:6px 0">No bill open. Link this card to a customer's UPI ID so card and UPI build one history:</div>
+        <div class="chips" style="margin:6px 0">
+          <button data-vpa="sharma.ji@paytm">Sharma ji (regular)</button>
+          <button data-vpa="gupta.ji@okaxis">Gupta ji (lapsed)</button>
+        </div>
+        <div class="row"><input id="linkVpa" placeholder="or type UPI ID, e.g. name@paytm"><button id="linkBtn">Link</button></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Ask Vyapaar Mitra</h2>
+      <div class="row"><input id="question" placeholder="Aaj ki sale kitni hui?"><button id="askBtn">Ask</button></div>
+      <div class="chips">
+        <button data-q="Aaj ki sale kitni hui?">Aaj ki sale?</button>
+        <button data-q="Is hafte sabse zyada kya bika?">Top item?</button>
+        <button data-q="Kya mujhe loan mil sakta hai?">Loan?</button>
+        <button data-q="Mere kitne customers hain?">Customers?</button>
+      </div>
+      <div class="speaker" id="answer" style="font-size:16px"></div>
+    </div>
+  </section>
+
+  <!-- RIGHT: Soundbox + agent -->
+  <section>
+    <div class="panel">
+      <h2>🔊 Soundbox</h2>
+      <div class="speaker" id="speaker">—</div>
+      <div class="row">
+        <button id="voiceBtn">Enable voice</button>
+        <button id="briefBtn">Morning briefing</button>
+        <button id="runBtn" class="primary">Run agent now</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Needs your approval</h2>
+      <div id="approvals"><div class="muted">Nothing pending.</div></div>
+    </div>
+
+    <div class="panel">
+      <h2>Agent activity</h2>
+      <ul class="feed" id="feed"></ul>
+    </div>
+  </section>
+</main>
+
+<div class="modal" id="settings">
+  <div class="panel">
+    <h2>Settings</h2>
+    <label class="muted">API key (API_KEY in .env)</label>
+    <input id="keyInput" type="password" style="margin:4px 0 12px">
+    <label class="muted">Merchant ID</label>
+    <input id="midInput" style="margin:4px 0 16px">
+    <button class="primary" id="saveSettings" style="width:100%">Save</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const store = { get: (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+let KEY = store.get('vm_key', '');
+let MID = store.get('vm_mid', 'MID-RAMESH-001');
+let voiceOn = false;
+let currentBill = null;
+let timer = null;
+let lastCardUid = null;
+const inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
+
+async function api(method, path, body) {
+  const res = await fetch('/api/v1' + path, { method, headers: { 'content-type': 'application/json', 'x-api-key': KEY }, body: body ? JSON.stringify(body) : undefined });
+  const json = await res.json().catch(() => ({}));
+  if (res.status === 401) openSettings();
+  if (!res.ok) throw new Error(json.error || res.status);
+  return json;
+}
+
+// ── Voice (the laptop IS the Soundbox) ───────────────────────────
+function pickVoice() {
+  const vs = speechSynthesis.getVoices();
+  return vs.find((v) => v.lang === 'en-IN') || vs.find((v) => v.lang === 'hi-IN') || vs.find((v) => v.lang.startsWith('en')) || null;
+}
+function say(text) {
+  $('speaker').textContent = text;
+  if (!voiceOn || !('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text.replace(/₹\s?([\d,]+)/g, '$1 rupaye').replace(/[🙏💬📊]/g, ''));
+  const v = pickVoice(); if (v) { u.voice = v; u.lang = v.lang; }
+  u.rate = 0.95;
+  speechSynthesis.speak(u);
+}
+$('voiceBtn').onclick = () => {
+  voiceOn = !voiceOn;
+  $('voiceBtn').textContent = voiceOn ? 'Voice on 🔊' : 'Enable voice';
+  if (voiceOn) say('Vyapaar Mitra Soundbox ready.');
+};
+
+// ── Feed ─────────────────────────────────────────────────────────
+function addFeed(kind, label, text) {
+  const li = document.createElement('li');
+  li.className = kind;
+  li.innerHTML = `<span class="k"></span><span class="t"></span>`;
+  li.querySelector('.k').textContent = `${label} · ${new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`;
+  li.querySelector('.t').textContent = text;
+  $('feed').prepend(li);
+  while ($('feed').children.length > 60) $('feed').lastChild.remove();
+}
+
+async function refreshApprovals() {
+  try {
+    const { pendingApprovals } = await api('GET', `/agent/insights?merchantId=${MID}`);
+    const box = $('approvals');
+    box.innerHTML = '';
+    if (!pendingApprovals.length) { box.innerHTML = '<div class="muted">Nothing pending.</div>'; return; }
+    for (const p of pendingApprovals) {
+      const d = document.createElement('div');
+      d.className = 'approval';
+      d.innerHTML = `<b></b><div class="m"></div><div class="why"></div><div class="row"><button class="ok">Approve</button><button class="ghost">Reject</button></div>`;
+      d.querySelector('b').textContent = p.title || p.kind;
+      d.querySelector('.m').textContent = p.message || p.reasoning || '';
+      d.querySelector('.why').textContent = 'Why it waits for you: ' + (p.whyNotAuto || 'needs approval');
+      const [ok, no] = d.querySelectorAll('button');
+      ok.onclick = () => decide(p.actionId, 'approve');
+      no.onclick = () => decide(p.actionId, 'reject');
+      box.appendChild(d);
+    }
+  } catch (e) { /* settings modal handles 401 */ }
+}
+async function decide(actionId, decision) {
+  await api('POST', '/agent/action/approve', { merchantId: MID, actionId, decision });
+  addFeed('ai', 'You', `${decision === 'approve' ? 'Approved' : 'Rejected'} a suggestion`);
+  refreshApprovals();
+}
+
+// ── Billing ──────────────────────────────────────────────────────
+function showState(which) {
+  $('newBill').style.display = which === 'new' ? 'block' : 'none';
+  $('bill').style.display = which === 'bill' ? 'block' : 'none';
+  $('paid').style.display = which === 'paid' ? 'block' : 'none';
+}
+document.querySelectorAll('[data-amt]').forEach((b) => b.onclick = () => { $('amount').value = b.dataset.amt; });
+$('createBtn').onclick = async () => {
+  const amount = Number($('amount').value);
+  if (!(amount > 0)) return $('amount').focus();
+  const bill = await api('POST', '/checkout', { merchantId: MID, amount });
+  showBill(bill);
+};
+$('amount').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('createBtn').click(); });
+function showBill(bill) {
+  currentBill = bill;
+  $('cardAlert').style.display = 'none';
+  $('billAmt').textContent = inr(bill.amount);
+  $('qr').innerHTML = bill.qrSvg || '';
+  showState('bill');
+  clearInterval(timer);
+  timer = setInterval(() => {
+    const s = Math.max(0, Math.round((new Date(bill.expiresAt) - Date.now()) / 1000));
+    $('countdown').textContent = s ? `Bill expires in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : 'Bill expired';
+    if (!s) { clearInterval(timer); showState('new'); }
+  }, 500);
+}
+$('cancelBtn').onclick = async () => {
+  if (currentBill) await api('POST', `/checkout/${currentBill.checkoutId}/cancel`, { merchantId: MID }).catch(() => {});
+  clearInterval(timer); currentBill = null; showState('new');
+};
+$('nextBtn').onclick = () => { $('amount').value = ''; showState('new'); $('amount').focus(); };
+function showPaid(c) {
+  clearInterval(timer); currentBill = null;
+  $('paidAmt').textContent = inr(c.amount) + ' received';
+  $('paidVia').textContent = (c.method === 'card' ? '💳 RFID card' : '📱 UPI QR') + ' · ' + (c.payer || '') + ' · ' + c.txnId;
+  $('paidTag').innerHTML = c.tag ? `<span class="tag ${c.tag}">${c.tag} · visit #${c.visit}</span>` : '';
+  showState('paid');
+}
+
+// Link a scanned card to a UPI identity
+document.querySelectorAll('[data-vpa]').forEach((b) => b.onclick = () => link(b.dataset.vpa));
+$('linkBtn').onclick = () => link($('linkVpa').value.trim());
+async function link(vpa) {
+  if (!lastCardUid || !vpa) return;
+  try {
+    const r = await api('POST', '/pos/link-card', { merchantId: MID, rfidUid: lastCardUid, payerVpa: vpa });
+    $('cardInfo').textContent = `→ linked to ${vpa} (${r.segment}, ${r.visitCount} visits)`;
+    addFeed('ai', 'Card linked', `${lastCardUid} → ${vpa}`);
+  } catch (e) { $('cardInfo').textContent = '— ' + e.message; }
+}
+
+// ── Agent controls ───────────────────────────────────────────────
+$('briefBtn').onclick = () => api('POST', '/agent/briefing', { merchantId: MID });
+$('runBtn').onclick = async () => {
+  $('runBtn').disabled = true;
+  try {
+    const r = await api('POST', '/agent/run', { merchantId: MID });
+    addFeed('ai', 'Agent cycle', r.insightsCreated ? `${r.insightsCreated} new insight(s) · reasoning by ${r.usedLLM ? 'Claude' : 'rules'}` : 'Nothing new — insights already raised today');
+  } finally { $('runBtn').disabled = false; refreshApprovals(); }
+};
+async function ask(q) {
+  if (!q) return;
+  $('answer').textContent = '…';
+  const r = await api('POST', '/agent/query', { merchantId: MID, question: q });
+  $('answer').textContent = r.answer;
+}
+$('askBtn').onclick = () => ask($('question').value.trim());
+$('question').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('askBtn').click(); });
+document.querySelectorAll('[data-q]').forEach((b) => b.onclick = () => { $('question').value = b.dataset.q; ask(b.dataset.q); });
+
+// ── Live feed from the server (SSE) ──────────────────────────────
+let es;
+function connect() {
+  if (es) es.close();
+  if (!KEY) return openSettings();
+  es = new EventSource(`/api/v1/live?key=${encodeURIComponent(KEY)}&merchantId=${encodeURIComponent(MID)}`);
+  es.addEventListener('hello', () => { $('liveDot').classList.add('on'); $('liveText').textContent = 'live'; refreshApprovals(); });
+  es.onerror = () => { $('liveDot').classList.remove('on'); $('liveText').textContent = 'reconnecting…'; };
+  es.addEventListener('channel', (e) => {
+    const d = JSON.parse(e.data);
+    if (d.channel === 'soundbox') { say(d.text); addFeed('soundbox', 'Soundbox', d.text); }
+    if (d.channel === 'whatsapp') addFeed('whatsapp', `WhatsApp → ${d.to}${d.mode === 'mock' ? ' (demo)' : ''}`, d.text);
+    if (d.channel === 'dashboard') {
+      const t = d.data?.summary || d.data?.title || d.event;
+      if (d.event === 'insight.created') addFeed('dashboard', 'Insight', d.data.summary || d.data.title);
+      else if (d.event === 'action.needs_approval') { addFeed('dashboard', 'Waiting for approval', d.data.title || d.data.kind); refreshApprovals(); }
+      else addFeed('dashboard', d.event, typeof t === 'string' ? t : d.event);
+    }
+  });
+  es.addEventListener('checkout', (e) => {
+    const c = JSON.parse(e.data);
+    if (c.status === 'pending' && c.qrSvg && (!currentBill || currentBill.checkoutId !== c.checkoutId)) showBill(c);
+    if (c.status === 'paid') showPaid(c);
+    if (c.status === 'cancelled' && currentBill && currentBill.checkoutId === c.checkoutId) { currentBill = null; showState('new'); }
+  });
+  es.addEventListener('card', (e) => {
+    const d = JSON.parse(e.data);
+    lastCardUid = d.rfidUid;
+    $('cardUid').textContent = d.rfidUid;
+    $('cardInfo').textContent = d.known ? `(known customer, ${d.visitCount} visits)` : '(new card)';
+    $('cardAlert').style.display = 'block';
+  });
+  es.addEventListener('action', (e) => {
+    const a = JSON.parse(e.data);
+    if (a.kind === 'LOYALTY_NUDGE' || a.kind === 'DAILY_BRIEFING') return; // already shown via Soundbox
+    addFeed('ai', `Agent ${a.mode === 'auto' ? 'auto-executed' : 'executed'}`, `${a.kind} → ${a.status}`);
+  });
+}
+
+// ── Settings ─────────────────────────────────────────────────────
+function openSettings() { $('keyInput').value = KEY; $('midInput').value = MID; $('settings').style.display = 'flex'; }
+$('settingsBtn').onclick = openSettings;
+$('saveSettings').onclick = () => {
+  KEY = $('keyInput').value.trim(); MID = $('midInput').value.trim() || 'MID-RAMESH-001';
+  store.set('vm_key', KEY); store.set('vm_mid', MID);
+  $('settings').style.display = 'none';
+  $('merchantLabel').textContent = MID;
+  connect();
+};
+
+$('merchantLabel').textContent = MID;
+connect();
+api('GET', `/checkout/current?merchantId=${MID}`).then((r) => { if (r.checkout) showBill(r.checkout); }).catch(() => {});
+</script>
+</body>
+</html>

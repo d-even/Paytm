@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pay · Vyapaar Mitra</title>
+<style>
+  :root { --bg: #f5f7fa; --card: #fff; --text: #16223a; --muted: #5c6b7a; --blue: #00b9f1; --navy: #0b1e3d; --green: #16a34a; --line: #e2e6ea; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .top { background: var(--navy); color: #fff; padding: 22px 18px 60px; text-align: center; }
+  .top .to { opacity: .8; font-size: 14px; }
+  .top .name { font-size: 20px; font-weight: 700; margin-top: 2px; }
+  .card { background: var(--card); margin: -40px 16px 16px; border-radius: 16px; padding: 20px; box-shadow: 0 6px 24px rgba(11,30,61,.12); }
+  .amt { font-size: 42px; font-weight: 800; text-align: center; margin: 4px 0 18px; }
+  label { font-size: 13px; color: var(--muted); }
+  input { width: 100%; font: inherit; padding: 13px 14px; border: 1px solid var(--line); border-radius: 12px; margin: 6px 0 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .chips button { font: inherit; font-size: 13px; background: #eef6fb; color: var(--navy); border: 0; border-radius: 999px; padding: 7px 12px; }
+  .pay { width: 100%; font: inherit; font-weight: 700; font-size: 18px; background: var(--blue); color: #fff; border: 0; border-radius: 12px; padding: 15px; }
+  .pay:disabled { opacity: .6; }
+  .err { color: #c0262d; font-size: 14px; min-height: 20px; margin-top: 8px; text-align: center; }
+  .done { display: none; text-align: center; padding: 10px 0; }
+  .tick { width: 84px; height: 84px; line-height: 84px; font-size: 48px; font-weight: 800; border-radius: 50%; background: var(--green); color: #fff; margin: 6px auto 12px; }
+  .note { text-align: center; color: var(--muted); font-size: 12px; margin: 0 20px 24px; }
+</style>
+</head>
+<body>
+  <div class="top">
+    <div class="to">Paying to</div>
+    <div class="name" id="merchant">…</div>
+  </div>
+
+  <div class="card">
+    <div id="form">
+      <div class="amt" id="amount">₹—</div>
+      <label for="vpa">Your UPI ID</label>
+      <input id="vpa" autocomplete="off" autocapitalize="none" placeholder="name@paytm">
+      <div class="chips">
+        <button data-vpa="sharma.ji@paytm">sharma.ji@paytm · regular</button>
+        <button data-vpa="gupta.ji@okaxis">gupta.ji@okaxis · lapsed</button>
+        <button data-vpa="new">New customer</button>
+      </div>
+      <button class="pay" id="payBtn">Pay</button>
+      <div class="err" id="err"></div>
+    </div>
+
+    <div class="done" id="done">
+      <div class="tick">✓</div>
+      <div style="font-size:24px;font-weight:800" id="doneAmt"></div>
+      <div style="color:var(--muted);margin-top:4px" id="doneRef"></div>
+    </div>
+  </div>
+
+  <p class="note">Demo UPI checkout for the hackathon. In production the QR is Paytm's dynamic UPI QR and the customer pays in their own UPI app.</p>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const id = location.pathname.split('/').pop();
+const inr = (n) => '₹' + Math.round(n).toLocaleString('en-IN');
+let amount = 0;
+
+function finished(title, sub) {
+  $('form').style.display = 'none';
+  $('done').style.display = 'block';
+  $('doneAmt').textContent = title;
+  $('doneRef').textContent = sub || '';
+}
+
+async function load() {
+  const res = await fetch('/api/v1/pay/' + id);
+  const info = await res.json();
+  if (!res.ok) { $('merchant').textContent = 'Bill not found'; $('form').style.display = 'none'; return; }
+  $('merchant').textContent = info.merchantName;
+  amount = info.amount;
+  $('amount').textContent = inr(info.amount);
+  $('payBtn').textContent = 'Pay ' + inr(info.amount);
+  if (info.status === 'paid') finished('Already paid', 'This bill has been settled.');
+  else if (info.status !== 'pending') finished('Bill ' + info.status, 'Ask the shopkeeper for a new QR.');
+}
+
+document.querySelectorAll('[data-vpa]').forEach((b) => b.onclick = () => {
+  $('vpa').value = b.dataset.vpa === 'new' ? `customer${Math.floor(1000 + Math.random() * 9000)}@upi` : b.dataset.vpa;
+});
+
+$('payBtn').onclick = async () => {
+  const payerVpa = $('vpa').value.trim();
+  $('err').textContent = '';
+  if (!payerVpa) { $('err').textContent = 'Enter your UPI ID'; return; }
+  $('payBtn').disabled = true;
+  $('payBtn').textContent = 'Paying…';
+  try {
+    const res = await fetch('/api/v1/pay/' + id, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ payerVpa }) });
+    const r = await res.json();
+    if (!res.ok) throw new Error(r.error || 'Payment failed');
+    finished(inr(r.amount) + ' paid', 'Ref ' + r.txnId);
+  } catch (e) {
+    $('err').textContent = e.message;
+    $('payBtn').disabled = false;
+    $('payBtn').textContent = 'Pay ' + inr(amount);
+  }
+};
+
+load();
+</script>
+</body>
+</html>

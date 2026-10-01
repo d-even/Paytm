@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+coverage/
+hardware/esp32_rfid_pos/config.h
+frontend/node_modules/
+frontend/dist/
+frontend/dist-static/
