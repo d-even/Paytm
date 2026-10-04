@@ -1,26 +1,34 @@
-// Deterministic demo data for "Ramesh General Store, Mumbai" — the story from the deck.
-// Pure function (no DB) so the same data powers `npm run seed` AND the unit tests.
+// Seed data for "Deven General Store, Mumbai". Pure functions (no DB), so the same data powers
+// `npm run seed` AND the unit tests. Two builders:
+//
+//   buildBaseData()  → the shop + two named card customers (Chinu, Shravni Chavan) and NOTHING else.
+//                      This is what `npm run seed` loads: History, Impact and every number in the app
+//                      then come from real payments made at your counter.
+//   buildDemoData()  → the same, plus 28 days of synthetic sales so the agent has patterns to find
+//                      (`npm run seed:demo`). Useful for a pitch; not real data.
 //
 // Built-in patterns the agent should discover on its own:
 //   • Tuesdays run ~18% below other days            → SALES_DIP  → WhatsApp offer
 //   • 8 regulars stopped coming ~3 weeks ago         → DORMANT_REGULARS → win-back
 //   • 4 steady weeks, ~₹2.9L/month                   → CREDIT_ELIGIBLE (recommend-only)
 //   • Detergent sales fell sharply this week         → SLOW_MOVER → restock alert
-const { hashIdentity, maskVpa } = require('../../src/utils/crypto');
+const { hashIdentity, maskVpa, maskUid } = require('../../src/utils/crypto');
 const { localParts } = require('../../src/utils/time');
+const config = require('../../src/config');
 
 const MERCHANT = {
-  merchantId: 'MID-RAMESH-001',
-  name: 'Ramesh General Store',
-  ownerName: 'Ramesh',
+  merchantId: 'MID-DEVEN-001',
+  name: 'Deven General Store',
+  ownerName: 'Deven',
   category: 'kirana',
   city: 'Mumbai',
-  phone: '+919800000001',
+  phone: '+918928877124', // the shop owner's number (the POS owner)
   language: 'hi-IN',
-  soundboxDeviceId: 'SB-RAMESH-01',
+  soundboxDeviceId: 'SB-DEVEN-01',
+  // The ESP32 firmware's DEVICE_ID. Renaming it means changing config.h and POS_DEVICE_SECRETS too.
   posDeviceIds: ['POS-RAMESH-01'],
   settings: {
-    // Ramesh has pre-approved low-risk marketing to auto-send (as in the demo story).
+    // Deven has pre-approved low-risk marketing to auto-send (as in the demo story).
     trust: { marketing: 'auto', loyalty: 'auto', restock: 'recommend', credit: 'recommend' },
     dailyBriefing: true,
     maxAutoMessagesPerDay: 100,
@@ -42,9 +50,29 @@ const ITEMS = [
   { name: 'Sabun', price: 40, weight: 6 },
 ];
 
-// Two named customers with RFID cards, used in the POS demo.
-const SHARMA = { vpa: 'sharma.ji@paytm', rfidUid: 'A3F19C2B', name: 'Sharma ji', phone: '+919800000101' };
-const GUPTA = { vpa: 'gupta.ji@okaxis', rfidUid: '7B22E4D1', name: 'Gupta ji', phone: '+919800000102' };
+// Merchants this seed replaces. The shop used to be called "Ramesh"; its data is wiped on re-seed.
+const LEGACY_MERCHANT_IDS = ['MID-RAMESH-001'];
+
+// The shop's two card customers. Both get WhatsApp offers on the same test phone (9321796361),
+// so one phone is enough to see every message. Their card UIDs come from .env (CARD_UID_*),
+// falling back to the virtual cards behind the app's "Tap card" button.
+const CUSTOMER_PHONE = '+919321796361';
+const CHINU = { vpa: 'chinu@paytm', rfidUid: config.cards.chinu, name: 'Chinu', phone: CUSTOMER_PHONE };
+const SHRAVNI = { vpa: 'shravni.chavan@okaxis', rfidUid: config.cards.shravni, name: 'Shravni Chavan', phone: CUSTOMER_PHONE };
+const CARD_CUSTOMERS = [CHINU, SHRAVNI];
+
+// The part of a customer profile that comes from knowing who they are, not from payments.
+function identityFields(c) {
+  return {
+    customerKey: hashIdentity('upi', c.vpa),
+    aliases: [hashIdentity('rfid', c.rfidUid)],
+    cardsMasked: [maskUid(c.rfidUid)],
+    displayName: c.name,
+    payerMasked: maskVpa(c.vpa),
+    phone: c.phone,
+    whatsappOptIn: true,
+  };
+}
 
 // Tiny seeded PRNG (mulberry32) → identical data on every run.
 function rng(seed) {
@@ -67,9 +95,9 @@ function pickWeighted(r, list) {
 
 function buildDemoData({ now = new Date(), days = 28, seed = 42 } = {}) {
   const r = rng(seed);
-  const regulars = [SHARMA];
+  const regulars = [CHINU];
   for (let i = 1; i < 40; i += 1) regulars.push({ vpa: `regular${i}@paytm`, phone: `+9198000${String(1000 + i).padStart(5, '0')}`, name: null });
-  const dormant = [GUPTA];
+  const dormant = [SHRAVNI];
   for (let i = 1; i < 8; i += 1) dormant.push({ vpa: `old${i}@ybl`, phone: `+9198001${String(1000 + i).padStart(5, '0')}`, name: null });
   const occasional = Array.from({ length: 150 }, (_, i) => ({ vpa: `walkin${i}@upi` }));
 
@@ -135,13 +163,12 @@ function buildDemoData({ now = new Date(), days = 28, seed = 42 } = {}) {
   const optIn = new Map([...regulars, ...dormant].map((c) => [hashIdentity('upi', c.vpa), c]));
   const profiles = [...byKey.entries()].map(([customerKey, p]) => {
     const c = optIn.get(customerKey);
-    const aliases = [];
-    if (c === SHARMA) aliases.push(hashIdentity('rfid', SHARMA.rfidUid));
-    if (c === GUPTA) aliases.push(hashIdentity('rfid', GUPTA.rfidUid));
+    const named = CARD_CUSTOMERS.includes(c) ? identityFields(c) : {};
     return {
-      merchantId: MERCHANT.merchantId, customerKey, aliases, payerMasked: p.payerMasked,
+      merchantId: MERCHANT.merchantId, customerKey, aliases: [], payerMasked: p.payerMasked,
       displayName: c?.name || undefined,
       phone: c?.phone, whatsappOptIn: Boolean(c),
+      ...named,
       visitCount: p.visitCount, totalSpend: p.totalSpend, firstSeen: p.firstSeen, lastSeen: p.lastSeen,
     };
   });
@@ -171,7 +198,21 @@ function buildDemoData({ now = new Date(), days = 28, seed = 42 } = {}) {
     payables: [{ label: 'Supplier payment (wholesaler)', amount: 24000, dueDate }],
   };
 
-  return { merchant: { ...MERCHANT, inventory, cashflow }, transactions, profiles, cards: { SHARMA, GUPTA } };
+  return { merchant: { ...MERCHANT, inventory, cashflow }, transactions, profiles, cards: { CHINU, SHRAVNI } };
 }
 
-module.exports = { buildDemoData, MERCHANT, SHARMA, GUPTA, ITEMS };
+// The clean start: the shop and its two card customers, no sales, no stock, no bills due.
+// Nothing here is made up except who the customers are; every rupee shown later is a real payment.
+function buildBaseData() {
+  const merchant = {
+    ...MERCHANT,
+    inventory: [],
+    cashflow: { openingBalance: 0, cogsPct: 0.74, dailyFixedCost: 0, safetyThreshold: 0, payables: [] },
+  };
+  const profiles = CARD_CUSTOMERS.map((c) => ({
+    merchantId: merchant.merchantId, ...identityFields(c), visitCount: 0, totalSpend: 0, segment: 'new',
+  }));
+  return { merchant, transactions: [], profiles, cards: { CHINU, SHRAVNI } };
+}
+
+module.exports = { buildDemoData, buildBaseData, MERCHANT, LEGACY_MERCHANT_IDS, CHINU, SHRAVNI, CARD_CUSTOMERS, ITEMS };

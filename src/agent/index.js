@@ -118,11 +118,13 @@ async function onPosTap({ merchantId, customer, via = 'card' }) {
   const merchant = await Merchant.findOne({ merchantId });
   const en = (merchant.language || '').startsWith('en');
   const n = rec.visitCount;
+  // A customer the merchant has named (Chinu, Shravni Chavan) is greeted by name.
+  const who = customer?.displayName;
   const message = rec.reason === 'lapsed-regular-returned'
-    ? (en ? `A regular is back after ${rec.gapDays} days — welcome them with ${rec.discountPct}% off.`
-      : `Purane regular customer ${rec.gapDays} din baad wapas aaye hain — welcome back, ${rec.discountPct}% discount dijiye.`)
-    : (en ? `Regular customer, visit number ${n} — offer a ${rec.discountPct}% loyalty discount.`
-      : `Yeh regular customer hain, ${n}vi baar aaye hain — ${rec.discountPct}% loyalty discount dijiye.`);
+    ? (en ? `${who || 'A regular'} is back after ${rec.gapDays} days — welcome them with ${rec.discountPct}% off.`
+      : `${who ? `${who} ji` : 'Purane regular customer'} ${rec.gapDays} din baad wapas aaye hain — welcome back, ${rec.discountPct}% discount dijiye.`)
+    : (en ? `${who ? `${who} is a regular` : 'Regular customer'}, visit number ${n} — offer a ${rec.discountPct}% loyalty discount.`
+      : `${who ? `${who} ji regular customer` : 'Yeh regular customer'} hain, ${n}vi baar aaye hain — ${rec.discountPct}% loyalty discount dijiye.`);
 
   const how = via === 'qr' ? 'UPI QR at counter' : 'RFID card tap';
   log.info('agent:realtime', `${how} recognised: ${rec.reason} (visit #${n})`);

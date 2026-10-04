@@ -5,6 +5,8 @@
 const { AgentAction, Transaction, CustomerProfile, Merchant } = require('../models');
 const config = require('../config');
 const { localParts } = require('../utils/time');
+const memory = require('../integrations/cognee');
+const { outcomeFact } = require('../integrations/memoryFacts');
 const log = require('../utils/logger');
 
 const MEASURABLE = ['WHATSAPP_OFFER', 'WINBACK_MESSAGE'];
@@ -77,6 +79,7 @@ async function learn(merchantId, { now = new Date() } = {}) {
     learning[action.kind] = s;
 
     outcomes.push({ actionId: action._id, kind: action.kind, ...outcome });
+    memory.remember(merchantId, outcomeFact({ merchantName: merchant.name, action, outcome }));
     const cur = outcome.metric.startsWith('sales') ? '₹' : '';
     log.info('agent:learn', `${action.kind}: ${outcome.metric} ${cur}${outcome.baseline} → ${cur}${outcome.observed} (${outcome.liftPct > 0 ? '+' : ''}${outcome.liftPct}%) → ${outcome.verdict}`);
   }
@@ -84,6 +87,7 @@ async function learn(merchantId, { now = new Date() } = {}) {
   merchant.learning = learning;
   merchant.markModified('learning');
   await merchant.save();
+  if (outcomes.length) memory.flush(merchantId).catch(() => {}); // the graph learns from the new results now, not in a minute
   return { evaluated: outcomes.length, outcomes, learning };
 }
 

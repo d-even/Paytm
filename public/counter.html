@@ -109,8 +109,8 @@
         <div><b>💳 Card scanned:</b> <code id="cardUid"></code> <span class="muted" id="cardInfo"></span></div>
         <div class="muted" style="margin:6px 0">No bill open. Link this card to a customer's UPI ID so card and UPI build one history:</div>
         <div class="chips" style="margin:6px 0">
-          <button data-vpa="sharma.ji@paytm">Sharma ji (regular)</button>
-          <button data-vpa="gupta.ji@okaxis">Gupta ji (lapsed)</button>
+          <button data-vpa="chinu@paytm">Chinu (regular)</button>
+          <button data-vpa="shravni.chavan@okaxis">Shravni Chavan (lapsed)</button>
         </div>
         <div class="row"><input id="linkVpa" placeholder="or type UPI ID, e.g. name@paytm"><button id="linkBtn">Link</button></div>
       </div>
@@ -168,7 +168,7 @@
 const $ = (id) => document.getElementById(id);
 const store = { get: (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 let KEY = store.get('vm_key', '');
-let MID = store.get('vm_mid', 'MID-RAMESH-001');
+let MID = store.get('vm_mid', 'MID-DEVEN-001');
 let voiceOn = false;
 let currentBill = null;
 let timer = null;
@@ -353,7 +353,7 @@ function connect() {
 function openSettings() { $('keyInput').value = KEY; $('midInput').value = MID; $('settings').style.display = 'flex'; }
 $('settingsBtn').onclick = openSettings;
 $('saveSettings').onclick = () => {
-  KEY = $('keyInput').value.trim(); MID = $('midInput').value.trim() || 'MID-RAMESH-001';
+  KEY = $('keyInput').value.trim(); MID = $('midInput').value.trim() || 'MID-DEVEN-001';
   store.set('vm_key', KEY); store.set('vm_mid', MID);
   $('settings').style.display = 'none';
   $('merchantLabel').textContent = MID;

@@ -6,6 +6,7 @@
 const config = require('../config');
 const tools = require('./tools');
 const llm = require('./llm');
+const memory = require('../integrations/cognee');
 const { DAY_NAMES_HI } = require('../utils/time');
 const log = require('../utils/logger');
 
@@ -111,6 +112,7 @@ Your job:
    - "message": the text of the action (for customer offers: a warm, short WhatsApp message under 280 characters, no links, no false urgency; for merchant-facing actions: one practical sentence). Use null if the finding has no proposed action.
    - "confidence": your confidence 0-1 that acting on it will help.
 3. Consider "learning": past outcomes of similar actions for this merchant. Lower confidence for action kinds that have not worked.
+   If "memory" is present it is the shop's long-term memory (who comes when, what worked before): use it to adjust confidence and wording, never as a source of numbers.
 Rules: never invent numbers, customers, products or discounts above 10%. Never promise loan approval. Keep the merchant's language: hi-IN means friendly Hinglish in Latin script; en-IN means simple Indian English.
 Respond with JSON only: {"insights":[{"id":string,"priority":number,"title":string,"summary":string,"message":string|null,"confidence":number}]}`;
 
@@ -125,7 +127,12 @@ async function reason(snapshot) {
 
   // …and let Claude re-rank and re-write it, within guardrails.
   if (llm.enabled) {
+    // Long-term memory from Cognee (null when it is off or has nothing yet).
+    const remembered = await memory.recall(snapshot.merchant.merchantId,
+      'Which customers, days of the week and offers have worked or not worked for this shop? Be specific and brief.');
+    if (remembered) log.info('agent:reason', 'long-term memory (Cognee) added to the prompt');
     const payload = {
+      ...(remembered ? { memory: remembered } : {}),
       merchant: { name: snapshot.merchant.name, category: snapshot.merchant.category, city: snapshot.merchant.city, language: snapshot.merchant.language },
       topSellingItem: topSeller(snapshot.itemUnits),
       learning: snapshot.learning,

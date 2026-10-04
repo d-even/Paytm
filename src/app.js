@@ -5,6 +5,9 @@ const config = require('./config');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 const llm = require('./agent/llm');
 const whatsapp = require('./channels/whatsapp');
+const n8n = require('./integrations/n8n');
+const sarvam = require('./integrations/sarvam');
+const cognee = require('./integrations/cognee');
 
 function createApp() {
   const app = express();
@@ -30,6 +33,9 @@ function createApp() {
       whatsapp: whatsapp.isLive() ? 'live' : 'mock',
       dashboard: config.channels.dashboardWebhookUrl ? 'webhook' : 'pull-only',
     },
+    automation: n8n.enabled() ? 'n8n' : 'built-in channels',
+    voice: sarvam.enabled() ? `sarvam (${config.sarvam.ttsModel})` : 'browser voice',
+    memory: cognee.enabled() ? 'cognee + mongodb' : 'mongodb',
     posDevices: [...config.pos.deviceSecrets.keys()],
   }));
 
@@ -46,6 +52,7 @@ function createApp() {
   app.use('/api/v1', require('./routes/payments'));
   app.use('/api/v1', require('./routes/merchants'));
   app.use('/api/v1/agent', require('./routes/agent'));
+  app.use('/api/v1/n8n', require('./routes/n8n')); // delivery receipts coming back from the n8n workflow
   app.use('/api/app', require('./routes/app')); // the React merchant app (frontend/)
 
   // Built React app (cd frontend && npm run build) — served at / with client-side routing.

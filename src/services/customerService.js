@@ -19,7 +19,7 @@ async function findByIdentity(merchantId, identityHash) {
 }
 
 // Called for every settled transaction — this is the agent's continuous "Observe".
-async function recordVisit({ merchantId, identityHash, amount, payerMasked, at = new Date() }) {
+async function recordVisit({ merchantId, identityHash, amount, payerMasked, cardMasked, at = new Date() }) {
   let profile = await findByIdentity(merchantId, identityHash);
   if (!profile) {
     profile = new CustomerProfile({ merchantId, customerKey: identityHash, aliases: [], firstSeen: at, payerMasked });
@@ -29,6 +29,7 @@ async function recordVisit({ merchantId, identityHash, amount, payerMasked, at =
   profile.$locals.prevLastSeen = profile.lastSeen || null;
   profile.visitCount += 1;
   profile.totalSpend += amount;
+  if (cardMasked && !profile.cardsMasked.includes(cardMasked)) profile.cardsMasked.push(cardMasked);
   if (!profile.lastSeen || at > profile.lastSeen) profile.lastSeen = at;
   if (!profile.firstSeen || at < profile.firstSeen) profile.firstSeen = at;
   profile.segment = segmentFor(profile, at);
@@ -37,16 +38,20 @@ async function recordVisit({ merchantId, identityHash, amount, payerMasked, at =
 }
 
 // Link an RFID card to an existing UPI-identified customer (done once at the counter).
-async function linkIdentity(merchantId, primaryKey, aliasHash) {
+async function linkIdentity(merchantId, primaryKey, aliasHash, cardMasked) {
   const profile = await findByIdentity(merchantId, primaryKey);
   if (!profile) return null;
   if (!profile.aliases.includes(aliasHash)) profile.aliases.push(aliasHash);
+  if (cardMasked && !profile.cardsMasked.includes(cardMasked)) profile.cardsMasked.push(cardMasked);
   await profile.save();
   // If the card had already built up its own profile, fold it in.
   const orphan = await CustomerProfile.findOne({ merchantId, customerKey: aliasHash });
   if (orphan && String(orphan._id) !== String(profile._id)) {
     profile.visitCount += orphan.visitCount;
     profile.totalSpend += orphan.totalSpend;
+    if (orphan.lastSeen && (!profile.lastSeen || orphan.lastSeen > profile.lastSeen)) profile.lastSeen = orphan.lastSeen;
+    if (orphan.firstSeen && (!profile.firstSeen || orphan.firstSeen < profile.firstSeen)) profile.firstSeen = orphan.firstSeen;
+    for (const c of orphan.cardsMasked || []) if (!profile.cardsMasked.includes(c)) profile.cardsMasked.push(c);
     profile.segment = segmentFor(profile);
     await profile.save();
     await orphan.deleteOne();

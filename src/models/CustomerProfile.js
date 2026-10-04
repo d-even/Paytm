@@ -10,6 +10,7 @@ const customerProfileSchema = new Schema(
     aliases: { type: [String], index: true }, // other identity hashes (rfid:…, upi:…)
     displayName: String,                       // optional, merchant-entered
     payerMasked: String,
+    cardsMasked: { type: [String], default: [] }, // RFID cards of this customer, last 4 only (e.g. "****316F")
 
     phone: String,                             // only if the customer opted in
     whatsappOptIn: { type: Boolean, default: false },

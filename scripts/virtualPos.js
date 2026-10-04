@@ -2,8 +2,8 @@
 // same JSON body, same HMAC signature, same endpoint.
 //
 //   node scripts/virtualPos.js <RFID_UID>            # like the real reader: pays the bill open on the laptop
-//   node scripts/virtualPos.js A3F19C2B              # Sharma ji (regular)
-//   node scripts/virtualPos.js 7B22E4D1              # Gupta ji (lapsed regular)
+//   node scripts/virtualPos.js A3F19C2B              # Chinu (regular)
+//   node scripts/virtualPos.js 7B22E4D1              # Shravni Chavan (lapsed regular)
 //   node scripts/virtualPos.js <RFID_UID> <AMOUNT>   # legacy: amount sent by the device (POST /pos/tap)
 //
 // Uses API_BASE (default http://localhost:PORT), DEVICE_ID (default POS-RAMESH-01)
@@ -25,7 +25,7 @@ async function main() {
   const cardOnly = !amountArg;
   const body = cardOnly
     ? JSON.stringify({ rfidUid: uid.toUpperCase() })
-    : JSON.stringify({ merchantId: process.argv[4] || 'MID-RAMESH-001', amount: Number(amountArg), rfidUid: uid });
+    : JSON.stringify({ merchantId: process.argv[4] || 'MID-DEVEN-001', amount: Number(amountArg), rfidUid: uid });
   const ts = Math.floor(Date.now() / 1000);
   const signature = crypto.createHmac('sha256', secret).update(`${deviceId}.${ts}.${body}`).digest('hex');
 

@@ -5,16 +5,18 @@ const { Merchant, Transaction, CustomerProfile, AgentInsight, AgentAction, Chann
 const { buildSnapshot } = require('../agent/observe');
 const tools = require('../agent/tools');
 const { startOfLocalDay, localParts, DAY_NAMES } = require('../utils/time');
+const { buildImpact } = require('./impact');
 
 const REWARD_EVERY = 12; // loyalty reward on every 12th visit
-const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const inr = (n) => `₹${Math.round(n).toLocaleString('en-IN')}`;
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 const iso = (d) => (d ? new Date(d).toISOString() : undefined);
 
 async function getMerchant(merchantId) {
   const m = await Merchant.findOne({ merchantId });
-  if (!m) throw httpError(404, 'merchant not found - run npm run seed');
+  // A token for a shop that no longer exists (e.g. after re-seeding under a new ID) is a stale
+  // session: 401 sends the app back to sign-in instead of leaving it stuck on errors.
+  if (!m) throw httpError(401, 'shop not found - sign in again (or run npm run seed)');
   return m;
 }
 
@@ -34,8 +36,14 @@ function merchantView(m) {
   };
 }
 
-// A customer is shown as "Cust ****7F" — never a name, phone or UPI ID.
-const customerLabel = (p) => `Cust ****${String(p?.customerKey || '').slice(-2).toUpperCase()}`;
+// A customer the merchant has named (Chinu, Shravni Chavan) is shown by that name; everyone else
+// stays anonymous: "Cust ****7F", never a phone or UPI ID.
+const customerLabel = (p) => p?.displayName || `Cust ****${String(p?.customerKey || '').slice(-2).toUpperCase()}`;
+const cardLabel = (masked) => `•••• ${String(masked || '').slice(-4)}`;
+const formatPhone = (phone) => {
+  const d = String(phone || '').replace(/\D/g, '').slice(-10);
+  return d.length === 10 ? `+91 ${d.slice(0, 5)} ${d.slice(5)}` : undefined;
+};
 
 // ── Trust settings (app vocabulary ↔ agent families) ─────────────────────────────
 //   marketing → marketing (WhatsApp offers) · pricing → loyalty (counter discounts)
@@ -99,6 +107,7 @@ function paymentView(txn, profile, billId) {
     terminalId: txn.deviceId || 'UPI',
     customer: {
       masked: profile ? customerLabel(profile) : 'New customer',
+      ...(profile?.displayName ? { name: profile.displayName } : {}),
       visits,
       returning: visits > 1,
       rewardDue: visits > 1 && visits % REWARD_EVERY === 0,
@@ -391,68 +400,108 @@ async function campaignsView(merchantId) {
   return out;
 }
 
-// ── Regulars ─────────────────────────────────────────────────────────────────────
+// ── Regulars: the shop's card customers ─────────────────────────────────────────
+// Everyone the shop knows by name or by an RFID card (Chinu, Shravni Chavan, a card tapped once),
+// with the card, number, visits and spend that MongoDB holds for them. Newest visit first.
 async function regularsView(merchantId) {
-  const min = config.agent.regularVisitThreshold;
-  const filter = { merchantId, visitCount: { $gte: min } };
-  const [total, list] = await Promise.all([
-    CustomerProfile.countDocuments(filter),
-    CustomerProfile.find(filter).sort({ visitCount: -1 }).limit(50).lean(),
-  ]);
+  const filter = { merchantId, $or: [{ displayName: { $type: 'string' } }, { 'cardsMasked.0': { $exists: true } }] };
+  const list = await CustomerProfile.find(filter).sort({ lastSeen: -1, visitCount: -1 }).limit(200).lean();
   return {
-    total,
+    total: list.length,
     regulars: list.map((p) => ({
       id: String(p._id),
       masked: customerLabel(p),
+      ...(p.displayName ? { name: p.displayName } : {}),
+      cards: (p.cardsMasked || []).map(cardLabel),
+      ...(p.phone ? { phone: formatPhone(p.phone) } : {}),
       visits: p.visitCount,
-      lastVisit: iso(p.lastSeen),
+      totalSpend: Math.round(p.totalSpend || 0),
+      ...(p.lastSeen ? { lastVisit: iso(p.lastSeen) } : {}),
       avgBasket: p.visitCount ? Math.round(p.totalSpend / p.visitCount) : 0,
-      reward: { status: p.visitCount % REWARD_EVERY === 0 ? 'earned' : 'progress', everyNVisits: REWARD_EVERY },
+      reward: { status: p.visitCount > 0 && p.visitCount % REWARD_EVERY === 0 ? 'earned' : 'progress', everyNVisits: REWARD_EVERY },
       consent: p.whatsappOptIn ? { whatsappOptIn: true, optedInAt: iso(p.createdAt) } : { whatsappOptIn: false },
     })),
   };
 }
 
-// ── Outcomes (what changed + what the agent learned) ─────────────────────────────
-async function outcomesView(merchantId, now = new Date()) {
-  const snapshot = await buildSnapshot(merchantId, { now });
-  const complete = snapshot.daily.filter((d) => d.dayKey < snapshot.todayKey);
-  const week2 = complete.slice(-7);
-  const week1 = complete.slice(-14, -7);
-  const order = [1, 2, 3, 4, 5, 6, 0];
-  const weekly = order.map((w) => ({
-    day: SHORT_DAYS[w],
-    week1: Math.round(week1.find((d) => d.weekday === w)?.total || 0),
-    week2: Math.round(week2.find((d) => d.weekday === w)?.total || 0),
+// ── History: what really happened, newest first ──────────────────────────────────
+// Payments (card taps and QR/UPI) and the agent's actions, read straight from MongoDB.
+// Empty until something happens. Lines are the app's own translation keys, so they follow the
+// merchant's language.
+async function historyView(merchantId, { limit = 100 } = {}) {
+  const [txns, actions, merchant] = await Promise.all([
+    Transaction.find({ merchantId, status: 'SETTLED' }).sort({ settledAt: -1 }).limit(limit).lean(),
+    AgentAction.find({ merchantId, kind: { $in: SHOWN_KINDS }, status: { $ne: 'skipped' } }).sort({ createdAt: -1 }).limit(limit).lean(),
+    getMerchant(merchantId),
+  ]);
+  const payments = await paymentsFromTxns(merchantId, txns);
+  const entries = payments.map((p) => ({
+    id: p.id,
+    at: p.paidAt,
+    kind: 'payment',
+    line: p.customer.name
+      ? { key: 'paymentFrom', params: { amount: p.amount, name: p.customer.name } }
+      : { key: 'paymentIn', params: { amount: p.amount } },
+    detail: { instrument: p.instrumentMasked, source: p.source, ...(p.customer.returning ? { visits: p.customer.visits } : {}) },
   }));
+  for (const a of actions) {
+    const e = historyActionEntry(a, merchant);
+    if (e) entries.push(e);
+  }
+  return entries.sort((x, y) => new Date(y.at) - new Date(x.at)).slice(0, limit);
+}
 
-  const measured = await AgentAction.findOne({ merchantId, kind: 'WHATSAPP_OFFER', 'outcome.evaluatedAt': { $exists: true } }).sort({ 'outcome.evaluatedAt': -1 }).lean();
-  const sum = (a) => Math.round(a.reduce((s, d) => s + d.total, 0));
-  const headline = measured
-    ? {
-      label: `${measured.payload?.weekdayName || 'Offer day'} sales after the offer`,
-      before: { label: 'Usual day', sales: Math.round(measured.outcome.baseline) },
-      after: { label: measured.payload?.targetDate || 'Offer day', sales: Math.round(measured.outcome.observed) },
-      changePct: measured.outcome.liftPct,
-      simulated: false,
-    }
-    : {
-      label: 'This week vs last week',
-      before: { label: 'Last week', sales: sum(week1) },
-      after: { label: 'This week', sales: sum(week2) },
-      changePct: sum(week1) ? Math.round(((sum(week2) - sum(week1)) / sum(week1)) * 1000) / 10 : 0,
-      simulated: false,
-    };
+function historyActionEntry(a, merchant) {
+  const type = TYPE_OF[a.family] || 'marketing';
+  const cap = a.payload?.costCap ?? merchant?.settings?.campaignSpendCap ?? 600;
+  const entry = (key, at, kind, params) => ({ id: `${a._id}-${key}`, at: iso(at), kind, line: { key, params: { type, ...params } } });
+  switch (a.status) {
+    case 'pending_approval':
+      return a.kind === 'CREDIT_OFFER' && a.payload?.indicativeLimit
+        ? entry('loanFound', a.createdAt, 'agent', { amount: a.payload.indicativeLimit })
+        : entry('suggested', a.createdAt, 'agent', {});
+    case 'executed':
+      return a.decidedBy === 'merchant'
+        ? entry('approved', a.executedAt || a.createdAt, 'decision', {})
+        : entry('autoDone', a.executedAt || a.createdAt, 'agent', { cap });
+    case 'rejected': return entry('rejected', a.updatedAt || a.createdAt, 'decision', {});
+    case 'paused': return entry('paused', a.updatedAt || a.createdAt, 'decision', {});
+    case 'undone': return entry('undone', a.updatedAt || a.createdAt, 'decision', {});
+    default: return null;
+  }
+}
 
-  const names = { WHATSAPP_OFFER: 'Slow-day WhatsApp offers', WINBACK_MESSAGE: 'Win-back messages' };
-  const learned = Object.entries(snapshot.learning || {}).map(([kind, s]) =>
-    `${names[kind] || kind}: ${s.positive} of ${s.tried} worked, average change ${s.avgLiftPct > 0 ? '+' : ''}${s.avgLiftPct}%.`);
-  if (!learned.length) learned.push('No offer has finished its measuring window yet. I check each one 7 days after it runs.');
+// ── Outcomes / Impact: computed from the shop's real payments ────────────────────
+async function outcomesView(merchantId, now = new Date(), { lang = 'hinglish' } = {}) {
+  const since = new Date(startOfLocalDay(now).getTime() - 13 * 864e5);
+  const [txns, offerActions, measured, open, campaigns] = await Promise.all([
+    Transaction.find({ merchantId, status: 'SETTLED', settledAt: { $gte: since } }, { amount: 1, channel: 1, customerKey: 1, settledAt: 1 }).lean(),
+    AgentAction.find({ merchantId, kind: 'WHATSAPP_OFFER', status: { $in: ['executed', 'paused'] }, executedAt: { $gte: since } }, { payload: 1, executedAt: 1 }).lean(),
+    AgentAction.find({ merchantId, kind: { $in: ['WHATSAPP_OFFER', 'WINBACK_MESSAGE'] }, 'outcome.evaluatedAt': { $exists: true } }, { kind: 1, outcome: 1 }).lean(),
+    AgentInsight.find({ merchantId, status: 'open' }, { title: 1 }).sort({ createdAt: -1 }).limit(3).lean(),
+    campaignsView(merchantId),
+  ]);
 
-  const open = await AgentInsight.find({ merchantId, status: 'open' }).sort({ createdAt: -1 }).limit(3).lean();
-  const nextWeek = open.map((i) => i.title);
-  if (!nextWeek.length) nextWeek.push('Keep watching the slow weekday and repeat what worked.');
-  return { headline, learned, nextWeek, weekly };
+  const keys = [...new Set(txns.map((t) => t.customerKey).filter(Boolean))];
+  const profiles = keys.length ? await profilesFor(merchantId, keys) : new Map();
+  const visitsOf = new Map(keys.map((k) => [k, profiles.get(k)?.visitCount || 0]));
+
+  const learning = Object.values(measured.reduce((acc, a) => {
+    const l = (acc[a.kind] ||= { kind: a.kind, tried: 0, positive: 0, lift: 0 });
+    l.tried += 1;
+    l.lift += a.outcome.liftPct || 0;
+    if (a.outcome.liftPct > 0) l.positive += 1;
+    return acc;
+  }, {})).map((l) => ({ kind: l.kind, tried: l.tried, positive: l.positive, avgLiftPct: Math.round((l.lift / l.tried) * 10) / 10 }));
+
+  const offers = {
+    sent: campaigns.reduce((n, c) => n + c.funnel.sent, 0),
+    redeemed: campaigns.reduce((n, c) => n + c.funnel.redeemed, 0),
+    extraSales: campaigns.reduce((n, c) => n + c.extraSales, 0),
+    weekdays: offerActions.map((a) => localParts(a.payload?.targetDate ? new Date(`${a.payload.targetDate}T12:00:00+05:30`) : a.executedAt).weekday),
+  };
+
+  return buildImpact({ txns, visitsOf, offers, learning, insightTitles: open.map((i) => i.title), now, lang });
 }
 
 // ── Cashflow ─────────────────────────────────────────────────────────────────────
@@ -488,6 +537,6 @@ function pacePct(snapshot, todaySales, now = new Date()) {
 
 module.exports = {
   getMerchant, merchantView, trustView, updateTrust, todaySummary, paymentForTxnId, billView,
-  listActions, actionById, actionView, insightsView, campaignsView, regularsView, outcomesView, cashflowView, pacePct,
+  listActions, actionById, actionView, insightsView, campaignsView, regularsView, historyView, outcomesView, cashflowView, pacePct,
   TYPE_OF, customerLabel, REWARD_EVERY,
 };

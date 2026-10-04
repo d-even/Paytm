@@ -2,6 +2,9 @@
 // the merchant's approval. Every path writes to the AgentAction audit trail.
 const { AgentAction, AgentInsight, CustomerProfile, ChannelMessage, Merchant } = require('../models');
 const channels = require('../channels');
+const n8n = require('../integrations/n8n');
+const memory = require('../integrations/cognee');
+const { offerFact } = require('../integrations/memoryFacts');
 const { bus, EVENTS } = require('../events/bus');
 const { daysAgo } = require('../utils/time');
 const log = require('../utils/logger');
@@ -30,9 +33,11 @@ const handlers = {
   async WHATSAPP_OFFER(action, merchant) {
     const recipients = await resolveAudience(merchant.merchantId, action.payload.audience);
     if (!recipients.length) return { skipped: true, reason: 'no opted-in recipients right now' };
-    const res = await channels.whatsapp.broadcast({
-      merchantId: merchant.merchantId, recipients, text: action.payload.message + OPT_OUT_FOOTER, actionId: action._id,
-    });
+    const text = action.payload.message + OPT_OUT_FOOTER;
+    // n8n (when configured) runs the broadcast; otherwise the built-in WhatsApp channel does. Same result either way.
+    const res = n8n.enabled()
+      ? await n8n.whatsappBroadcast({ action, merchant, recipients, text })
+      : await channels.whatsapp.broadcast({ merchantId: merchant.merchantId, recipients, text, actionId: action._id });
     await CustomerProfile.updateMany({ _id: { $in: recipients.map((r) => r._id) } }, { $set: { lastOfferAt: new Date() } });
     // Close the loop with the merchant, by voice.
     const en = (merchant.language || '').startsWith('en');
@@ -41,6 +46,7 @@ const handlers = {
       merchant, actionId: action._id,
       text: en ? `I sent your offer to ${res.sent} ${who} on WhatsApp.` : `Maine aapke ${res.sent} ${who} ko WhatsApp par offer bhej diya hai.`,
     });
+    memory.remember(merchant.merchantId, offerFact({ merchantName: merchant.name, action, result: res }));
     return { ...res, recipients: recipients.length, recipientIds: recipients.map((r) => r._id) };
   },
 
@@ -55,14 +61,16 @@ const handlers = {
 
   async RESTOCK_ALERT(action, merchant) {
     const msg = await channels.dashboard.push({ merchantId: merchant.merchantId, event: 'restock.alert', data: action.payload, actionId: action._id });
-    return { pushed: true, messageId: msg._id };
+    const automation = await n8n.notify(action, merchant); // e.g. draft the supplier order
+    return { pushed: true, messageId: msg._id, ...(automation ? { n8n: automation } : {}) };
   },
 
   // Showing the offer is the action. Applying for the loan is always the merchant's
   // own step in the Paytm app — the agent never submits an application.
   async CREDIT_OFFER(action, merchant) {
     const msg = await channels.dashboard.push({ merchantId: merchant.merchantId, event: 'credit.offer', data: action.payload, actionId: action._id });
-    return { offerShown: true, messageId: msg._id };
+    const automation = await n8n.notify(action, merchant); // surface it on the Paytm side
+    return { offerShown: true, messageId: msg._id, ...(automation ? { n8n: automation } : {}) };
   },
 
   async DAILY_BRIEFING(action, merchant) {

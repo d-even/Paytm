@@ -18,7 +18,7 @@ const { hashIdentity, maskVpa } = require('../src/utils/crypto');
 const { localParts } = require('../src/utils/time');
 const { seed } = require('./seed');
 
-const MID = 'MID-RAMESH-001';
+const MID = 'MID-DEVEN-001';
 const DEVICE = 'POS-RAMESH-01';
 let BASE;
 
@@ -97,12 +97,12 @@ async function main() {
     console.log(`   ${decision === 'approve' ? '✅' : '❌'} ${r.kind} → ${r.status}`);
   }
 
-  step(6, 'Sharma ji taps his card at the counter', 'Complementary signal: POS/RFID → real-time');
-  console.log('   ESP32 LCD ←', await posTap(data.cards.SHARMA.rfidUid, 240));
+  step(6, 'Chinu taps her card at the counter', 'Complementary signal: POS/RFID → real-time');
+  console.log('   ESP32 LCD ←', await posTap(data.cards.CHINU.rfidUid, 240));
   await sleep(300);
 
-  step(7, 'Gupta ji — a lapsed regular — walks back in', 'Complementary signal: POS/RFID → real-time');
-  console.log('   ESP32 LCD ←', await posTap(data.cards.GUPTA.rfidUid, 310));
+  step(7, 'Shravni Chavan — a lapsed regular — walks back in', 'Complementary signal: POS/RFID → real-time');
+  console.log('   ESP32 LCD ←', await posTap(data.cards.SHRAVNI.rfidUid, 310));
   await sleep(300);
 
   step(8, 'Merchant asks the copilot', 'Action layer: POST /agent/query');

@@ -1,6 +1,5 @@
 // API for the React merchant app (frontend/). Same paths and JSON shapes as the app's
 // typed client (frontend/src/lib/api.ts), backed by the real agent, MongoDB and the counter.
-const crypto = require('crypto');
 const { Router } = require('express');
 const config = require('../config');
 const agent = require('../agent');
@@ -12,7 +11,7 @@ const views = require('../services/appViews');
 const { buildSnapshot } = require('../agent/observe');
 const { requireApp, issueToken } = require('../middleware/appAuth');
 const { bus, EVENTS } = require('../events/bus');
-const { hashIdentity } = require('../utils/crypto');
+const { hashIdentity, maskUid } = require('../utils/crypto');
 const log = require('../utils/logger');
 
 const router = Router();
@@ -32,8 +31,11 @@ router.post('/auth/verify', async (req, res) => {
   if (!INDIAN_MOBILE.test(phone)) return res.status(422).json({ error: 'Enter a valid 10-digit mobile number' });
   if (!/^\d{6}$/.test(otp)) return res.status(422).json({ error: 'Enter the 6-digit OTP' });
   if (otp === '000000') return res.status(401).json({ error: 'Incorrect OTP' });
-  // A number registered to a merchant signs into that shop; any other number gets the demo shop.
-  const merchant = (await Merchant.findOne({ phone: `+91${phone}` })) || (await Merchant.findOne({ merchantId: config.defaultMerchantId }));
+  // A number registered to a merchant signs into that shop; any other number gets the default shop
+  // (or, if DEFAULT_MERCHANT_ID in .env is stale, the newest shop in the database).
+  const merchant = (await Merchant.findOne({ phone: `+91${phone}` }))
+    || (await Merchant.findOne({ merchantId: config.defaultMerchantId }))
+    || (await Merchant.findOne().sort({ _id: -1 }));
   if (!merchant) return res.status(404).json({ error: 'No shop found - run npm run seed' });
   res.json({ merchant: views.merchantView(merchant), token: issueToken(merchant.merchantId) });
 });
@@ -53,12 +55,13 @@ bus.on(EVENTS.CHECKOUT_UPDATED, (c) => {
 });
 bus.on(EVENTS.CARD_SCANNED, (d) => {
   customerService.findByIdentity(d.merchantId, hashIdentity('rfid', d.rfidUid))
-    .then((p) => send(d.merchantId, 'card', { rfidUid: d.rfidUid, known: Boolean(p), visits: p?.visitCount || 0, label: p ? (p.displayName || views.customerLabel(p)) : null }))
+    // known = this card already belongs to a named customer; otherwise the counter offers to link it.
+    .then((p) => send(d.merchantId, 'card', { rfidUid: d.rfidUid, known: Boolean(p?.displayName), visits: p?.visitCount || 0, label: p?.displayName || null }))
     .catch(() => {});
 });
 // Only the agent's own words — payment confirmations are already announced by the app itself.
 bus.on(EVENTS.CHANNEL_MESSAGE, (m) => {
-  if (m.channel === 'soundbox' && m.actionId) send(m.merchantId, 'voice', { text: m.text, lang: m.lang });
+  if (m.channel === 'soundbox' && m.actionId) send(m.merchantId, 'voice', { text: m.text, lang: m.lang, ...(m.audio ? { audio: m.audio, mime: m.mime } : {}) });
   if (m.channel === 'whatsapp') send(m.merchantId, 'whatsapp', { to: m.to, mode: m.mode });
 });
 bus.on(EVENTS.ACTION_UPDATED, (a) => send(a.merchantId, 'action', { id: String(a._id), kind: a.kind, status: a.status }));
@@ -98,10 +101,11 @@ router.post('/agent/action/approve', async (req, res) => {
 
 router.get('/agent/settings/trust', async (req, res) => res.json(views.trustView(await views.getMerchant(req.merchantId))));
 router.put('/agent/settings/trust', async (req, res) => res.json(await views.updateTrust(req.merchantId, req.body || {})));
-router.get('/agent/outcomes', async (req, res) => res.json(await views.outcomesView(req.merchantId)));
+router.get('/agent/outcomes', async (req, res) => res.json(await views.outcomesView(req.merchantId, new Date(), { lang: req.query.lang === 'en' ? 'en' : 'hinglish' })));
 router.get('/agent/cashflow', async (req, res) => res.json(await views.cashflowView(req.merchantId)));
 router.get('/agent/campaigns', async (req, res) => res.json(await views.campaignsView(req.merchantId)));
 router.get('/agent/regulars', async (req, res) => res.json(await views.regularsView(req.merchantId)));
+router.get('/agent/history', async (req, res) => res.json(await views.historyView(req.merchantId)));
 
 const FOLLOW_UPS = {
   en: ['How much did I sell today?', 'Which day is slowest?', 'Am I eligible for a loan?'],
@@ -179,14 +183,14 @@ router.post('/counter/bill/cancel', async (req, res) => {
 });
 
 // The app's "Tap card" button = a counter simulator for when the ESP32 reader isn't connected.
-// It taps the demo cards in turn (Sharma ji, Gupta ji, then a new shopper), through the same
-// code path as a real tap.
-const SIM_CARDS = ['A3F19C2B', '7B22E4D1', null];
+// It taps the shop's two card customers in turn (Chinu, then Shravni Chavan), through the same
+// code path as a real tap. The UIDs are CARD_UID_CHINU / CARD_UID_SHRAVNI in .env.
+const SIM_CARDS = [config.cards.chinu, config.cards.shravni];
 let simTaps = 0;
 router.post('/counter/bill/tap', async (req, res) => {
   const billId = String(req.body?.billId || '');
   if (!billId) throw httpError(422, 'billId required');
-  const uid = SIM_CARDS[simTaps++ % SIM_CARDS.length] || crypto.randomBytes(4).toString('hex').toUpperCase();
+  const uid = SIM_CARDS[simTaps++ % SIM_CARDS.length];
   const r = await checkout.payByCard({ merchantId: req.merchantId, checkoutId: billId, rfidUid: uid });
   const [payment, today] = await Promise.all([views.paymentForTxnId(req.merchantId, r.txnId), views.todaySummary(req.merchantId)]);
   res.status(201).json({ payment: { ...payment, billId }, today });
@@ -204,7 +208,7 @@ router.post('/counter/card/link', async (req, res) => {
   if (!/^[0-9A-F]{4,20}$/.test(rfidUid)) throw httpError(422, 'invalid card UID');
   const profile = await CustomerProfile.findOne({ _id: customerId, merchantId: req.merchantId }).catch(() => null);
   if (!profile) throw httpError(404, 'customer not found');
-  const linked = await customerService.linkIdentity(req.merchantId, profile.customerKey, hashIdentity('rfid', rfidUid));
+  const linked = await customerService.linkIdentity(req.merchantId, profile.customerKey, hashIdentity('rfid', rfidUid), maskUid(rfidUid));
   log.info('pos', `card ****${rfidUid.slice(-4)} linked to ${linked.displayName || views.customerLabel(linked)}`);
   res.json({ ok: true, label: linked.displayName || views.customerLabel(linked), visits: linked.visitCount });
 });

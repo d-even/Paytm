@@ -3,6 +3,8 @@ const { Transaction, Merchant } = require('../models');
 const { bus, EVENTS } = require('../events/bus');
 const { hashIdentity, maskVpa, maskUid } = require('../utils/crypto');
 const customerService = require('./customerService');
+const memory = require('../integrations/cognee');
+const { paymentFact } = require('../integrations/memoryFacts');
 const log = require('../utils/logger');
 
 // Mock of the Paytm payment gateway. In production this module is replaced by the
@@ -15,7 +17,7 @@ function newTxnId(prefix) {
   return `${prefix}${Date.now()}${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
 }
 
-async function settle({ merchantId, amount, channel, source, identityHash, payerMasked, deviceId, items, at }) {
+async function settle({ merchantId, amount, channel, source, identityHash, payerMasked, cardMasked, deviceId, items, at }) {
   if (!(amount > 0)) throw Object.assign(new Error('amount must be > 0'), { status: 400 });
 
   const txn = await Transaction.create({
@@ -36,8 +38,13 @@ async function settle({ merchantId, amount, channel, source, identityHash, payer
 
   // Observe: keep the customer profile current on every payment.
   const customer = identityHash
-    ? await customerService.recordVisit({ merchantId, identityHash, amount, payerMasked, at: txn.settledAt })
+    ? await customerService.recordVisit({ merchantId, identityHash, amount, payerMasked, cardMasked, at: txn.settledAt })
     : null;
+
+  if (memory.enabled()) {
+    const m = await Merchant.findOne({ merchantId }, { name: 1 }).lean().catch(() => null);
+    memory.remember(merchantId, paymentFact({ merchantName: m?.name || merchantId, txn, customer }));
+  }
 
   bus.emit(EVENTS.TXN_SETTLED, { txn, customer });
   return { txn, customer };
@@ -58,7 +65,7 @@ async function processUpiPayment({ merchantId, amount, payerVpa, items, at, chan
 async function processPosTap({ merchantId, amount, rfidUid, deviceId, items }, { emitRealtime = true } = {}) {
   const identityHash = hashIdentity('rfid', rfidUid);
   const result = await settle({
-    merchantId, amount, channel: 'CARD_TAP', source: 'pos', identityHash, payerMasked: maskUid(rfidUid), deviceId, items,
+    merchantId, amount, channel: 'CARD_TAP', source: 'pos', identityHash, payerMasked: maskUid(rfidUid), cardMasked: maskUid(rfidUid), deviceId, items,
   });
   result.realtimeEvent = { merchantId, deviceId, identityHash, txn: result.txn, customer: result.customer, via: 'card' };
   if (emitRealtime) bus.emit(EVENTS.POS_TAP, result.realtimeEvent);

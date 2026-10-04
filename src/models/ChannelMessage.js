@@ -10,7 +10,7 @@ const channelMessageSchema = new Schema(
     to: String,
     text: String,
     lang: String,
-    mode: { type: String, enum: ['live', 'mock'] },
+    mode: { type: String, enum: ['live', 'mock', 'n8n'] },
     status: { type: String, enum: ['sent', 'failed'], default: 'sent' },
     providerResponse: Schema.Types.Mixed,
   },
